@@ -4,7 +4,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use ddsfile::{
@@ -63,7 +63,9 @@ impl Options {
     }
 }
 
-/// Sent once per finished file (whether it succeeded or failed).
+/// Sent once per finished file (whether it succeeded or failed), in `done` order.
+/// The callback runs under a lock on a rayon worker: keep it quick (e.g. send on a channel)
+/// and don't start rayon work from it, or it can deadlock.
 #[derive(Debug, Clone)]
 pub struct Progress {
     pub done: usize,
@@ -132,17 +134,21 @@ fn run(
     job: impl Fn(&Path) -> Result<(), String> + Sync,
 ) {
     keep_full_speed();
-    let done = AtomicUsize::new(0);
+    let done = Mutex::new(0);
     let total = files.len();
     let results: Vec<_> = files
         .par_iter()
         .map(|f| {
             let r = job(f);
+            // Count and report under one lock so callers never see `done` go backwards.
+            let mut done = done.lock().unwrap();
+            *done += 1;
             progress(Progress {
-                done: done.fetch_add(1, Ordering::Relaxed) + 1,
+                done: *done,
                 total,
                 path: f.clone(),
             });
+            drop(done);
             r.err().map(|e| (f.clone(), e))
         })
         .collect();
@@ -236,7 +242,9 @@ fn encode_file(png: &Path, opts: &Options) -> Result<(), String> {
 }
 
 /// Encode an RGBA image to a DDS with a full mip chain: BC1 if fully opaque, else BC7.
-pub fn encode(mut img: RgbaImage, opts: &Options) -> Dds {
+fn encode(mut img: RgbaImage, opts: &Options) -> Dds {
+    // Decide before resizing: Lanczos can round a lone 254 alpha up to 255.
+    let alpha = img.pixels().any(|p| p.0[3] != 255);
     if opts.vflip {
         imageops::flip_vertical_in_place(&mut img);
     }
@@ -251,7 +259,6 @@ pub fn encode(mut img: RgbaImage, opts: &Options) -> Dds {
         );
     }
     let (w, h) = img.dimensions();
-    let alpha = img.pixels().any(|p| p.0[3] != 255);
     let levels = 32 - w.max(h).leading_zeros();
 
     let mut data = Vec::new();

@@ -268,3 +268,11 @@ fn bc1_keeps_hard_red_green_edges() {
     let out = decode_level(&roundtrip(src.clone(), &NO_FLIP), 0);
     assert_eq!(out, src);
 }
+
+#[test]
+fn fix_size_keeps_faint_alpha_as_bc7() {
+    let mut src = gradient(7, 7, false);
+    src.put_pixel(3, 3, Rgba([10, 20, 30, 254]));
+    let dds = roundtrip(src, &NO_FLIP);
+    assert_eq!(dds.get_dxgi_format(), Some(DxgiFormat::BC7_UNorm));
+}
