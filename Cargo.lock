@@ -202,6 +202,7 @@ dependencies = [
  "image",
  "intel_tex_2",
  "rayon",
+ "rgbcx",
  "tempfile",
  "walkdir",
  "windows-sys",
@@ -456,6 +457,12 @@ dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
 ]
+
+[[package]]
+name = "rgbcx"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "459aab4d862e9218eb24ddeec79f6dc6b4377d2500f1a4213d26153b9dca835e"
 
 [[package]]
 name = "rustix"

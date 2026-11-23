@@ -7,7 +7,7 @@ Batch-converts PNG images to DDS. It's a drop-in replacement for [todds](https:/
 - Writes the `.dds` next to the `.png`. Reruns can skip PNGs that are older than their DDS.
 - Clean mode deletes only `.dds` files that have a sibling `.png`. Other DDS files are left alone.
 - Runs in parallel on all cores (rayon). Builds on Windows, macOS and Linux (x86_64 and aarch64) with plain `cargo build`.
-- Encoder: [intel_tex_2](https://crates.io/crates/intel_tex_2) (Intel ISPC kernels, prebuilt for the targets above); BC7 uses its "alpha fast" profile.
+- Encoders: BC1 uses [rgbcx](https://crates.io/crates/rgbcx), a pure-Rust port of the encoder todds uses. BC7 uses [intel_tex_2](https://crates.io/crates/intel_tex_2) (Intel ISPC kernels, prebuilt for the targets above) with its "alpha fast" profile.
 
 ## CLI
 

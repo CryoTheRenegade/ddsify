@@ -12,7 +12,7 @@ use ddsfile::{
 };
 use image::RgbaImage;
 use image::imageops::{self, FilterType};
-use intel_tex_2::{RgbaSurface, bc1, bc7};
+use intel_tex_2::{RgbaSurface, bc7};
 use rayon::prelude::*;
 
 /// When to replace an existing `.dds`.
@@ -258,18 +258,23 @@ pub fn encode(mut img: RgbaImage, opts: &Options) -> Dds {
     let mut level = img;
     for _ in 0..levels {
         let (lw, lh) = level.dimensions();
-        let padded = pad_to_blocks(&level);
-        let surface = RgbaSurface {
-            data: &padded,
-            width: padded.width(),
-            height: padded.height(),
-            stride: padded.width() * 4,
-        };
-        data.extend(if alpha {
-            bc7::compress_blocks(&bc7::alpha_fast_settings(), &surface)
+        if alpha {
+            let padded = pad_to_blocks(&level);
+            let surface = RgbaSurface {
+                data: &padded,
+                width: padded.width(),
+                height: padded.height(),
+                stride: padded.width() * 4,
+            };
+            data.extend(bc7::compress_blocks(&bc7::alpha_fast_settings(), &surface));
         } else {
-            bc1::compress_blocks(&surface)
-        });
+            // Not intel_tex_2's BC1: it (and squish) flatten blocks with anti-correlated colors,
+            // e.g. red/green mask textures, to one average color. rgbcx is what todds uses.
+            data.extend(
+                rgbcx::encode(lw, lh, &level, rgbcx::Format::Bc1, rgbcx::Quality::Balanced)
+                    .expect("RGBA buffer matches its dimensions"),
+            );
+        }
         if lw > 1 || lh > 1 {
             level = imageops::resize(
                 &level,

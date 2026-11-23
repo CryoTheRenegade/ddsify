@@ -258,3 +258,13 @@ fn missing_root_is_an_error() {
         .is_err()
     );
 }
+
+#[test]
+fn bc1_keeps_hard_red_green_edges() {
+    // RimWorld `_m` mask textures; intel_tex_2's BC1 flattened these blocks to one average color.
+    let red = Rgba([255, 0, 0, 255]);
+    let green = Rgba([0, 255, 0, 255]);
+    let src = RgbaImage::from_fn(8, 8, |x, y| if x < 1 + y / 2 { red } else { green });
+    let out = decode_level(&roundtrip(src.clone(), &NO_FLIP), 0);
+    assert_eq!(out, src);
+}
