@@ -11,6 +11,8 @@ Batch-converts PNG images to DDS. It's a drop-in replacement for [todds](https:/
 
 ## CLI
 
+Install with `cargo install ddsify`, or download a binary for Windows, Linux or macOS (Apple silicon) from [Releases](https://github.com/CryoTheRenegade/ddsify/releases).
+
 ```sh
 ddsify -on -p <dir>                          # encode every PNG, skip up-to-date DDS
 ddsify -cl -p <dir>                          # delete DDS files that have a sibling PNG
