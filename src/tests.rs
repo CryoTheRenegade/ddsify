@@ -310,27 +310,123 @@ fn case_variants_share_one_dds() {
     write_png(&d.join("a.png"), &gradient(8, 8, false));
     write_png(&d.join("a.PNG"), &gradient(8, 8, false));
     write_png(&d.join("b.png"), &gradient(8, 8, false));
-    fs::write(d.join("b.DDS"), b"old").unwrap();
+    fs::write(d.join("b.Dds"), b"old").unwrap();
+    write_png(&d.join("c.png"), &gradient(8, 8, false));
+    fs::write(d.join("c.dds"), b"old").unwrap();
+    fs::write(d.join("c.DDS"), b"old").unwrap();
 
     let opts = Options {
         overwrite: Overwrite::Always,
         ..Options::default()
     };
     let r = optimize(d, &opts, |_| {}).unwrap();
-    assert_eq!((r.done, r.failed.len()), (2, 1), "{:?}", r.failed);
+    assert_eq!((r.done, r.failed.len()), (3, 1), "{:?}", r.failed);
     assert!(
         r.failed[0].0.ends_with("a.png"),
         "a.PNG sorts first and wins"
     );
     assert!(d.join("a.dds").is_file());
     assert_ne!(
-        fs::read(d.join("b.DDS")).unwrap(),
+        fs::read(d.join("b.Dds")).unwrap(),
         b"old",
-        "existing b.DDS is replaced"
+        "existing b.Dds is replaced"
     );
     assert!(!d.join("b.dds").exists(), "no second b.dds");
+    assert_ne!(
+        fs::read(d.join("c.dds")).unwrap(),
+        b"old",
+        "c.dds is preferred"
+    );
+
+    // Nothing is written on a rerun, so the a.png/a.PNG conflict is not reported again.
+    let r = optimize(d, &Options::default(), |_| {}).unwrap();
+    assert_eq!(
+        (r.done, r.skipped, r.failed.len()),
+        (0, 4, 0),
+        "{:?}",
+        r.failed
+    );
 
     let r = clean(d, &opts, |_| {}).unwrap();
-    assert_eq!((r.done, r.failed.len()), (2, 0));
-    assert!(!d.join("a.dds").exists() && !d.join("b.DDS").exists());
+    assert_eq!((r.done, r.failed.len()), (4, 0), "{:?}", r.failed);
+    for f in ["a.dds", "b.Dds", "c.dds", "c.DDS"] {
+        assert!(!d.join(f).exists(), "{f} deleted");
+    }
+}
+
+#[test]
+fn clean_removes_leftover_staging_files_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let tex = dir.path().join("Textures");
+    write_png(&tex.join("a.png"), &gradient(8, 8, false));
+    fs::write(tex.join(".ddsify-1-2.tmp"), b"partial").unwrap();
+    let keep = [
+        tex.join("keep.tmp"),
+        tex.join(".ddsify-backup.tmp"),
+        dir.path().join(".ddsify-3-4.tmp"), // outside the Textures filter
+    ];
+    for f in &keep {
+        fs::write(f, b"user").unwrap();
+    }
+    let r = clean(dir.path(), &Options::rimworld(), |_| {}).unwrap();
+    assert_eq!((r.done, r.failed.len()), (1, 0));
+    assert!(!tex.join(".ddsify-1-2.tmp").exists());
+    for f in &keep {
+        assert!(f.exists(), "{} kept", f.display());
+    }
+}
+
+/// Case-insensitive file systems: `A.dds` beside `a.png` is that PNG's DDS.
+#[cfg(windows)]
+#[test]
+fn clean_finds_dds_with_other_stem_case() {
+    let dir = tempfile::tempdir().unwrap();
+    write_png(&dir.path().join("a.png"), &gradient(8, 8, false));
+    fs::write(dir.path().join("A.dds"), b"old").unwrap();
+    let r = clean(dir.path(), &Options::default(), |_| {}).unwrap();
+    assert_eq!((r.done, r.failed.len()), (1, 0));
+    assert!(!dir.path().join("A.dds").exists());
+}
+
+/// Needs a case-sensitive file system to tell `a.DDS` from `a.dds`.
+#[cfg(target_os = "linux")]
+#[test]
+fn single_png_root_reuses_uppercase_dds() {
+    let dir = tempfile::tempdir().unwrap();
+    let png = dir.path().join("a.png");
+    write_png(&png, &gradient(8, 8, false));
+    write_png(&dir.path().join("b.png"), &gradient(8, 8, false));
+    fs::write(dir.path().join("a.DDS"), b"old").unwrap();
+    let opts = Options {
+        overwrite: Overwrite::Always,
+        ..Options::default()
+    };
+    let r = optimize(&png, &opts, |_| {}).unwrap();
+    assert_eq!((r.done, r.failed.len()), (1, 0));
+    assert_ne!(fs::read(dir.path().join("a.DDS")).unwrap(), b"old");
+    assert!(!dir.path().join("a.dds").exists() && !dir.path().join("b.dds").exists());
+    assert_eq!(clean(&png, &opts, |_| {}).unwrap().done, 1);
+    assert!(!dir.path().join("a.DDS").exists());
+}
+
+#[test]
+fn single_non_png_root_touches_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let notes = dir.path().join("notes.txt");
+    fs::write(&notes, b"user").unwrap();
+    fs::write(dir.path().join(".ddsify-1-2.tmp"), b"partial").unwrap();
+    let r = clean(&notes, &Options::default(), |_| {}).unwrap();
+    assert_eq!((r.done, r.failed.len()), (0, 0));
+    assert!(dir.path().join(".ddsify-1-2.tmp").exists());
+}
+
+/// Case-insensitive file systems: `A.PNG` names the file stored as `a.png`.
+#[cfg(windows)]
+#[test]
+fn single_png_root_in_other_case_is_encoded() {
+    let dir = tempfile::tempdir().unwrap();
+    write_png(&dir.path().join("a.png"), &gradient(8, 8, false));
+    let r = optimize(&dir.path().join("A.PNG"), &Options::default(), |_| {}).unwrap();
+    assert_eq!((r.done, r.failed.len()), (1, 0));
+    assert!(dir.path().join("a.dds").is_file());
 }
