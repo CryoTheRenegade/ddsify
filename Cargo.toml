@@ -5,6 +5,9 @@ edition = "2024"
 rust-version = "1.98.1"
 license = "GPL-3.0-only"
 description = "Batch PNG to DDS converter (BC1/BC7 with mipmaps), a todds replacement"
+repository = "https://github.com/CryoTheRenegade/ddsify"
+keywords = ["dds", "texture", "bc7", "bc1", "rimworld"]
+categories = ["command-line-utilities", "multimedia::images"]
 
 [dependencies]
 clap = { version = "4.6.9", features = ["derive"], optional = true }
