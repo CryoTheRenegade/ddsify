@@ -28,7 +28,7 @@ Differences from todds:
 ## Library
 
 ```toml
-ddsify = { path = "../ddsify", default-features = false }  # skips clap
+ddsify = { version = "0.1", default-features = false }  # skips the CLI (clap)
 ```
 
 ```rust
