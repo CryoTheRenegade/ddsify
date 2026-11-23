@@ -22,6 +22,7 @@ todds's multi-letter short flags (`-cl -on -vf -fs -ss`) map to long flags (`--c
 Differences from todds:
 - `-ss`/`--dir-name` matches a whole folder name (case-insensitive), not a substring of the path.
 - `-fs` scales the image up to the next multiple of 4. todds pads it with transparent pixels, which shifts the image and turns opaque images into BC7.
+- Mipmaps (and `-fs`) are filtered with premultiplied alpha, so the color of fully transparent pixels doesn't bleed into visible edges in lower mips. todds filters straight alpha.
 - The formats are fixed: there is no `-f` or `-af`. There is also no `--regex`, `--dry-run`, `--threads`, quality setting, or TXT/output-dir input.
 
 ## Library

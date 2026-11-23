@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use ddsfile::{
     AlphaMode, D3D10ResourceDimension, D3DFormat, Dds, DxgiFormat, NewD3dParams, NewDxgiParams,
 };
-use image::RgbaImage;
 use image::imageops::{self, FilterType};
+use image::{Rgba, Rgba32FImage, RgbaImage};
 use intel_tex_2::{RgbaSurface, bc7};
 use rayon::prelude::*;
 
@@ -248,15 +248,15 @@ fn encode(mut img: RgbaImage, opts: &Options) -> Dds {
     if opts.vflip {
         imageops::flip_vertical_in_place(&mut img);
     }
+    // Resize in premultiplied alpha so the color of transparent pixels can't bleed into
+    // visible ones (todds filters straight alpha, which halos edges in lower mips).
+    let mut filtered = premultiply(&img);
     let (w, h) = img.dimensions();
     if opts.fix_size && (w % 4 != 0 || h % 4 != 0) {
         // todds pads with transparent pixels instead; scaling keeps the sprite filling its mesh.
-        img = imageops::resize(
-            &img,
-            w.next_multiple_of(4),
-            h.next_multiple_of(4),
-            FilterType::Lanczos3,
-        );
+        let (fw, fh) = (w.next_multiple_of(4), h.next_multiple_of(4));
+        filtered = imageops::resize(&filtered, fw, fh, FilterType::Lanczos3);
+        img = unpremultiply(&filtered);
     }
     let (w, h) = img.dimensions();
     let levels = 32 - w.max(h).leading_zeros();
@@ -283,12 +283,13 @@ fn encode(mut img: RgbaImage, opts: &Options) -> Dds {
             );
         }
         if lw > 1 || lh > 1 {
-            level = imageops::resize(
-                &level,
+            filtered = imageops::resize(
+                &filtered,
                 (lw / 2).max(1),
                 (lh / 2).max(1),
                 FilterType::Triangle,
             );
+            level = unpremultiply(&filtered);
         }
     }
 
@@ -319,6 +320,28 @@ fn encode(mut img: RgbaImage, opts: &Options) -> Dds {
     assert_eq!(dds.data.len(), data.len(), "mip chain size mismatch");
     dds.data = data;
     dds
+}
+
+fn premultiply(img: &RgbaImage) -> Rgba32FImage {
+    Rgba32FImage::from_fn(img.width(), img.height(), |x, y| {
+        let [r, g, b, a] = img.get_pixel(x, y).0.map(|c| f32::from(c) / 255.0);
+        Rgba([r * a, g * a, b * a, a])
+    })
+}
+
+fn unpremultiply(img: &Rgba32FImage) -> RgbaImage {
+    RgbaImage::from_fn(img.width(), img.height(), |x, y| {
+        let [r, g, b, a] = img.get_pixel(x, y).0;
+        let a = a.clamp(0.0, 1.0);
+        let straight = |c: f32| {
+            if a > 0.0 {
+                (c / a).clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        };
+        Rgba([straight(r), straight(g), straight(b), a].map(|c| (c * 255.0).round() as u8))
+    })
 }
 
 /// Grow the image to whole 4x4 blocks by repeating its last row and column.

@@ -276,3 +276,23 @@ fn fix_size_keeps_faint_alpha_as_bc7() {
     let dds = roundtrip(src, &NO_FLIP);
     assert_eq!(dds.get_dxgi_format(), Some(DxgiFormat::BC7_UNorm));
 }
+
+#[test]
+fn transparent_color_does_not_bleed_into_mips() {
+    // Opaque red next to fully transparent blue: the 1x1 mip must stay red, not turn purple.
+    let src = RgbaImage::from_fn(8, 8, |x, _| {
+        if x < 4 {
+            Rgba([255, 0, 0, 255])
+        } else {
+            Rgba([0, 0, 255, 0])
+        }
+    });
+    let dds = roundtrip(src, &NO_FLIP);
+    let last = decode_level(&dds, dds.get_num_mipmap_levels() - 1);
+    let [r, _, b, a] = last.get_pixel(0, 0).0;
+    assert!(
+        r > 240 && b < 16 && (100..156).contains(&a),
+        "1x1 mip {:?}",
+        [r, b, a]
+    );
+}
