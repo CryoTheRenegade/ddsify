@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -38,8 +39,14 @@ struct Cli {
 }
 
 /// todds uses multi-letter short flags, which clap cannot express; map them to the long names.
-fn todds_args() -> impl Iterator<Item = std::ffi::OsString> {
-    std::env::args_os().map(|a| {
+/// Arguments after `--` are left alone so a path can be named like a flag.
+fn todds_args(args: impl Iterator<Item = OsString>) -> impl Iterator<Item = OsString> {
+    let mut literal = false;
+    args.map(move |a| {
+        if literal {
+            return a;
+        }
+        literal = a == "--";
         let long = match a.to_str() {
             Some("-cl") => "--clean",
             Some("-on") => "--overwrite-new",
@@ -53,7 +60,7 @@ fn todds_args() -> impl Iterator<Item = std::ffi::OsString> {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse_from(todds_args());
+    let cli = Cli::parse_from(todds_args(std::env::args_os()));
     let opts = Options {
         dir_name: cli.dir_name,
         overwrite: if cli.overwrite {
@@ -103,5 +110,19 @@ fn main() -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn todds_flags_are_rewritten_until_double_dash() {
+        let args = ["ddsify", "-cl", "--", "-cl"]
+            .map(OsString::from)
+            .into_iter();
+        let out: Vec<OsString> = todds_args(args).collect();
+        assert_eq!(out, ["ddsify", "--clean", "--", "-cl"].map(OsString::from));
     }
 }

@@ -206,7 +206,11 @@ fn optimize_is_incremental_and_clean_spares_shipped_dds() {
         !dir.path().join("ModA/About/Preview.dds").exists(),
         "only Textures folders"
     );
-    assert!(!tex.join("a.dds.tmp").exists());
+    let tmp_left = fs::read_dir(&tex)
+        .unwrap()
+        .flatten()
+        .any(|e| e.path().to_string_lossy().ends_with(".tmp"));
+    assert!(!tmp_left, "staging files are renamed away");
 
     let r = optimize(dir.path(), &opts, |_| {}).unwrap();
     assert_eq!((r.done, r.skipped), (0, 2));
@@ -295,4 +299,38 @@ fn transparent_color_does_not_bleed_into_mips() {
         "1x1 mip {:?}",
         [r, b, a]
     );
+}
+
+/// Needs a case-sensitive file system to create `a.png` next to `a.PNG`.
+#[cfg(target_os = "linux")]
+#[test]
+fn case_variants_share_one_dds() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    write_png(&d.join("a.png"), &gradient(8, 8, false));
+    write_png(&d.join("a.PNG"), &gradient(8, 8, false));
+    write_png(&d.join("b.png"), &gradient(8, 8, false));
+    fs::write(d.join("b.DDS"), b"old").unwrap();
+
+    let opts = Options {
+        overwrite: Overwrite::Always,
+        ..Options::default()
+    };
+    let r = optimize(d, &opts, |_| {}).unwrap();
+    assert_eq!((r.done, r.failed.len()), (2, 1), "{:?}", r.failed);
+    assert!(
+        r.failed[0].0.ends_with("a.png"),
+        "a.PNG sorts first and wins"
+    );
+    assert!(d.join("a.dds").is_file());
+    assert_ne!(
+        fs::read(d.join("b.DDS")).unwrap(),
+        b"old",
+        "existing b.DDS is replaced"
+    );
+    assert!(!d.join("b.dds").exists(), "no second b.dds");
+
+    let r = clean(d, &opts, |_| {}).unwrap();
+    assert_eq!((r.done, r.failed.len()), (2, 0));
+    assert!(!d.join("a.dds").exists() && !d.join("b.DDS").exists());
 }

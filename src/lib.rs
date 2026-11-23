@@ -1,10 +1,13 @@
 //! Batch-convert PNG images to DDS (BC1 for opaque images, BC7 for images with alpha) with
 //! full mip chains. A todds replacement. Synchronous; work runs on rayon's global thread pool.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use ddsfile::{
@@ -91,17 +94,32 @@ pub fn optimize(
     progress: impl Fn(Progress) + Sync,
 ) -> io::Result<Report> {
     let start = Instant::now();
-    let pngs = find_pngs(root, opts)?;
     let mut report = Report::default();
-    let todo: Vec<PathBuf> = pngs
-        .into_iter()
-        .filter(|png| {
-            let go = needs_encode(png, &png.with_extension("dds"), opts.overwrite);
-            report.skipped += usize::from(!go);
-            go
-        })
-        .collect();
-    run(&todo, &mut report, progress, |png| encode_file(png, opts));
+    let mut targets = HashSet::new();
+    let mut conflicts = HashSet::new();
+    let mut todo = Vec::new();
+    for png in find_pngs(root, opts)? {
+        let dds = dds_path(&png);
+        if !targets.insert(dds.clone()) {
+            // a.png and a.PNG on a case-sensitive file system would both write a.dds.
+            conflicts.insert(png.clone());
+            todo.push(png);
+        } else if needs_encode(&png, &dds, opts.overwrite) {
+            todo.push(png);
+        } else {
+            report.skipped += 1;
+        }
+    }
+    run(&todo, &mut report, progress, |png| {
+        if conflicts.contains(png) {
+            let dds = dds_path(png);
+            return Err(format!(
+                "{} is already the target of another PNG",
+                dds.display()
+            ));
+        }
+        encode_file(png, opts)
+    });
     report.elapsed = start.elapsed();
     Ok(report)
 }
@@ -114,11 +132,13 @@ pub fn clean(
     progress: impl Fn(Progress) + Sync,
 ) -> io::Result<Report> {
     let start = Instant::now();
-    let dds: Vec<PathBuf> = find_pngs(root, opts)?
-        .into_iter()
-        .map(|p| p.with_extension("dds"))
+    let mut dds: Vec<PathBuf> = find_pngs(root, opts)?
+        .iter()
+        .map(|p| dds_path(p))
         .filter(|d| d.is_file())
         .collect();
+    let mut seen = HashSet::new();
+    dds.retain(|d| seen.insert(d.clone())); // a.png and a.PNG share one DDS
     let mut report = Report::default();
     run(&dds, &mut report, progress, |d| {
         fs::remove_file(d).map_err(|e| e.to_string())
@@ -190,7 +210,8 @@ fn find_pngs(root: &Path, opts: &Options) -> io::Result<Vec<PathBuf>> {
         ));
     }
     let mut out = Vec::new();
-    for entry in walkdir::WalkDir::new(&root) {
+    // Sorted so that when two PNGs map to one DDS, the same one wins every run.
+    for entry in walkdir::WalkDir::new(&root).sort_by_file_name() {
         let entry = entry.map_err(io::Error::other)?;
         let path = entry.path();
         let is_png = path
@@ -213,6 +234,17 @@ fn find_pngs(root: &Path, opts: &Options) -> io::Result<Vec<PathBuf>> {
     Ok(out)
 }
 
+/// The DDS next to `png`: an existing `.DDS` is reused on case-sensitive file systems.
+// shortcut: mixed-case extensions like `.Dds` are not matched; add a directory scan if one shows up.
+fn dds_path(png: &Path) -> PathBuf {
+    let (lower, upper) = (png.with_extension("dds"), png.with_extension("DDS"));
+    if !lower.exists() && upper.is_file() {
+        upper
+    } else {
+        lower
+    }
+}
+
 fn needs_encode(png: &Path, dds: &Path, overwrite: Overwrite) -> bool {
     let modified = |p: &Path| fs::metadata(p).and_then(|m| m.modified());
     match (overwrite, modified(dds)) {
@@ -231,12 +263,18 @@ fn encode_file(png: &Path, opts: &Options) -> Result<(), String> {
         .write(&mut bytes)
         .map_err(|e| e.to_string())?;
     // Write then rename so an interrupted run never leaves a truncated DDS for the game to load.
-    let dds = png.with_extension("dds");
-    let tmp = png.with_extension("dds.tmp");
-    fs::write(&tmp, bytes)
-        .and_then(|_| fs::rename(&tmp, &dds))
+    // Unique per call and created exclusively, so other runs and user files are never clobbered.
+    static NEXT_TMP: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT_TMP.fetch_add(1, Ordering::Relaxed);
+    // Independent of the stem, so a name near the file-system limit still fits.
+    let tmp = png.with_file_name(format!(".ddsify-{}-{n}.tmp", std::process::id()));
+    let mut file = fs::File::create_new(&tmp).map_err(|e| e.to_string())?;
+    let written = file.write_all(&bytes);
+    drop(file);
+    written
+        .and_then(|_| fs::rename(&tmp, dds_path(png)))
         .map_err(|e| {
-            let _ = fs::remove_file(&tmp);
+            let _ = fs::remove_file(&tmp); // ours: create_new succeeded
             e.to_string()
         })
 }
